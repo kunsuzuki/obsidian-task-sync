@@ -1,0 +1,722 @@
+"use client";
+
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
+import { Task } from '../types';
+import { createTask, updateTask as updateTaskService, deleteTask as deleteTaskService } from '../services/taskService';
+import { syncTasksWithVault } from '../services/syncService';
+import { updateDailyNote } from '../services/dailyNoteService';
+import { directoryHandleCache, getDirectoryHandleFromCache, cacheDirectoryHandle, createDirectoryByPath } from '../utils/fileSystem';
+
+// タスクマネージャーのコンテキスト型定義
+interface TaskManagerContextType {
+  tasks: Task[];
+  addTask: (taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => Task;
+  updateTask: (taskId: string, updates: Partial<Task>) => void;
+  deleteTask: (taskId: string) => void;
+  syncWithVault: () => Promise<void>;
+  selectVault: () => Promise<void>;
+  isFirstSync: boolean;
+  isVaultSelected: boolean;
+  isSyncing: boolean;
+  hasLocalChanges: boolean;
+  lastSynced: string | null;
+  syncError: string | null;
+  isLoading: boolean; // アプリの読み込み状態
+  isPermissionChecking: boolean; // 権限確認中の状態
+}
+
+// デフォルト値
+const defaultTaskManagerContext: TaskManagerContextType = {
+  tasks: [],
+  addTask: () => ({ id: '', title: '', status: 1, createdAt: '', updatedAt: '' }),
+  updateTask: () => {},
+  deleteTask: () => {},
+  syncWithVault: async () => {},
+  selectVault: async () => {},
+  isFirstSync: true,
+  isVaultSelected: false,
+  isSyncing: false,
+  hasLocalChanges: false,
+  lastSynced: null,
+  syncError: null,
+  isLoading: true, // 初期状態は読み込み中
+  isPermissionChecking: false,
+};
+
+// コンテキストの作成
+const TaskManagerContext = createContext<TaskManagerContextType>(defaultTaskManagerContext);
+
+// カスタムフックの作成
+export const useTaskManager = () => useContext(TaskManagerContext);
+
+// プロバイダーコンポーネント
+export const TaskManagerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // タスクの状態
+  const [tasks, setTasks] = useState<Task[]>([]);
+  
+  // 同期関連の状態
+  const [isFirstSync, setIsFirstSync] = useState<boolean>(true);
+  const [isVaultSelected, setIsVaultSelected] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [hasLocalChanges, setHasLocalChanges] = useState<boolean>(false);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  
+  // 読み込み状態と権限確認状態
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isPermissionChecking, setIsPermissionChecking] = useState<boolean>(false);
+  
+  // ディレクトリハンドルの権限確認を行う関数
+  const checkDirectoryPermission = async () => {
+    try {
+      // ディレクトリハンドルをキャッシュから取得
+      const vaultDirHandle = await getDirectoryHandleFromCache('vault');
+      
+      // ディレクトリハンドルがない場合
+      if (!vaultDirHandle) {
+        console.log('ディレクトリハンドルがキャッシュに存在しません');
+        setIsPermissionChecking(false);
+        return;
+      }
+      
+      // 権限確認
+      try {
+        // @ts-ignore - TypeScriptの型定義が最新のAPIに追いついていない場合の対処
+        const permission = await vaultDirHandle.requestPermission({ mode: 'readwrite' });
+        console.log(`ディレクトリハンドルの権限状態: ${permission}`);
+        
+        if (permission === 'granted') {
+          // 権限が付与された場合
+          toast.success('保管庫へのアクセス権限を取得しました。', {
+            autoClose: 3000,
+            position: 'top-center',
+          });
+          
+          // 権限確認完了
+          setIsPermissionChecking(false);
+        } else {
+          // 権限が付与されなかった場合
+          throw new Error('保管庫へのアクセス権限が付与されませんでした。');
+        }
+      } catch (permissionError) {
+        console.error('権限確認中にエラーが発生しました:', permissionError);
+        
+        // 権限確認エラーの場合、ユーザーに通知するが、「設定がされていません」というメッセージは表示しない
+        toast.info('保管庫へのアクセス権限を確認してください。「同期」ボタンをクリックすると権限が確認されます。', {
+          autoClose: 5000,
+          position: 'top-center',
+        });
+        
+        // 権限確認完了
+        setIsPermissionChecking(false);
+      }
+    } catch (error) {
+      console.error('ディレクトリハンドルの取得中にエラーが発生しました:', error);
+      setIsPermissionChecking(false);
+    }
+  };
+  
+    // ページ読み込み時にローカルストレージから情報を読み込む
+  useEffect(() => {
+    // 読み込み状態をセット
+    setIsLoading(true);
+    
+    // ローカルストレージから情報を読み込む関数
+    const loadDataFromLocalStorage = async () => {
+      try {
+        // ローカルストレージからタスクを読み込む
+        const savedTasks = localStorage.getItem('obsidian-task-sync-tasks');
+        if (savedTasks) {
+          setTasks(JSON.parse(savedTasks));
+          console.log('ローカルストレージからタスクを読み込みました');
+        }
+        
+        // 保管庫の選択状態を確認
+        const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+        if (savedSettings) {
+          const parsedSettings = JSON.parse(savedSettings);
+          if (parsedSettings.vaultPath && parsedSettings.vaultPath !== '未選択') {
+            setIsVaultSelected(true);
+            console.log('保管庫が選択されています:', parsedSettings.vaultPath);
+            
+            // ディレクトリハンドルのキャッシュ状態を確認
+            const cacheStatus = localStorage.getItem('directory-handle-cache-status');
+            if (cacheStatus) {
+              try {
+                const status = JSON.parse(cacheStatus);
+                console.log('ディレクトリハンドルのキャッシュ状態:', status);
+                
+                // 権限確認中の状態を表示
+                setIsPermissionChecking(true);
+                
+                // ユーザーに読み込み中であることを通知
+                toast.info('保管庫の設定を読み込み中です。しばらくお待ちください...', {
+                  autoClose: 3000,
+                  position: 'top-center',
+                });
+                
+                // 権限確認は別の関数で実行する
+                await checkDirectoryPermission();
+              } catch (error) {
+                console.error('キャッシュ状態の解析中にエラーが発生しました:', error);
+                setIsPermissionChecking(false);
+              }
+            } else {
+              // キャッシュ状態がない場合は、ユーザーに保管庫を再選択するよう促す
+              toast.warning('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。', {
+                autoClose: 5000,
+                position: 'top-center',
+              });
+            }
+          } else {
+            // 保管庫が選択されていない場合
+            console.log('保管庫が選択されていません');
+            setIsVaultSelected(false);
+          }
+        } else {
+          // 設定が保存されていない場合
+          console.log('設定が保存されていません');
+          setIsVaultSelected(false);
+        }
+        
+        // 最後の同期時間を読み込む
+        const lastSyncedTime = localStorage.getItem('obsidian-task-sync-last-synced');
+        if (lastSyncedTime) {
+          setLastSynced(lastSyncedTime);
+        }
+        
+        // 読み込み完了
+        setIsLoading(false);
+      } catch (error) {
+        console.error('保管庫選択状態の確認中にエラーが発生しました:', error);
+        setIsVaultSelected(false);
+        setIsLoading(false);
+        setIsPermissionChecking(false);
+      }
+    };
+    
+    // 読み込み処理を実行
+    loadDataFromLocalStorage();
+  }, []);
+
+  // タスクが変更されたらローカルストレージに保存
+  useEffect(() => {
+    if (tasks.length > 0) {
+      localStorage.setItem('obsidian-task-sync-tasks', JSON.stringify(tasks));
+      setHasLocalChanges(true);
+    }
+  }, [tasks]);
+
+  // 保管庫を選択
+  const selectVault = async (): Promise<void> => {
+    try {
+      // ローカルストレージから既存のキャッシュをクリア
+      localStorage.removeItem('directory-handle-cache-status');
+      sessionStorage.removeItem('directory-handle-cache-status');
+      localStorage.removeItem('obsidian-vault-info');
+      
+      // メモリ上のキャッシュもクリア
+      for (const key in directoryHandleCache) {
+        delete directoryHandleCache[key];
+      }
+      
+      // ディレクトリピッカーを表示
+      const dirHandle = await window.showDirectoryPicker({
+        id: 'obsidian-vault',
+        mode: 'readwrite',
+        startIn: 'documents',
+      });
+      
+      // 永続的な権限をリクエスト
+      try {
+        // @ts-ignore - TypeScriptの型定義が最新のAPIに追いついていない場合の対処
+        const permission = await dirHandle.requestPermission({ mode: 'readwrite' });
+        console.log(`ディレクトリハンドルの権限状態: ${permission}`);
+        
+        if (permission !== 'granted') {
+          throw new Error('保管庫へのアクセス権限が付与されませんでした。');
+        }
+      } catch (permissionError) {
+        console.error('権限のリクエスト中にエラーが発生しました:', permissionError);
+        throw new Error('保管庫へのアクセス権限の取得に失敗しました。');
+      }
+      
+      // ディレクトリハンドルをメモリとキャッシュに保存
+      directoryHandleCache['vault'] = dirHandle;
+      await cacheDirectoryHandle('vault', dirHandle);
+      console.log('ディレクトリハンドルをメモリとキャッシュに保存しました:', dirHandle.name);
+      
+      // 保管庫選択状態を更新
+      setIsVaultSelected(true);
+      
+      // 既存の設定を読み込む
+      let existingSettings = {};
+      try {
+        const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+        if (savedSettings) {
+          existingSettings = JSON.parse(savedSettings);
+        }
+      } catch (error) {
+        console.error('設定の読み込み中にエラーが発生しました:', error);
+      }
+      
+      // 設定を更新
+      const updatedSettings = {
+        ...existingSettings,
+        vaultPath: dirHandle.name,
+        taskFolderPath: (existingSettings as any)?.taskFolderPath || 'Obsidian-Sync-Tasks',
+        noteFolderPath: (existingSettings as any)?.noteFolderPath || 'Obsidian-Sync-Notes',
+        dailyNoteFolderPath: (existingSettings as any)?.dailyNoteFolderPath || 'Daily',
+        dailyNoteFormat: (existingSettings as any)?.dailyNoteFormat || 'YYYY-MM-DD',
+        dailyNoteTemplate: (existingSettings as any)?.dailyNoteTemplate || '',
+        dailyNoteTaskSection: (existingSettings as any)?.dailyNoteTaskSection || '## タスク',
+        autoSync: true
+      };
+      
+      // 設定をローカルストレージに保存
+      localStorage.setItem('obsidian-task-sync-settings', JSON.stringify(updatedSettings));
+      console.log('設定を保存しました:', updatedSettings);
+      
+      // ディレクトリハンドルのテスト
+      try {
+        // ディレクトリハンドルが機能するか確認
+        const testDir = await dirHandle.getDirectoryHandle('test-directory', { create: true });
+        const testFile = await testDir.getFileHandle('test-file.txt', { create: true });
+        const writable = await testFile.createWritable();
+        await writable.write('Test content');
+        await writable.close();
+        console.log('ディレクトリハンドルのテストが成功しました');
+      } catch (testError) {
+        console.error('ディレクトリハンドルのテスト中にエラーが発生しました:', testError);
+        throw new Error('選択されたディレクトリに書き込み権限がありません。別のディレクトリを選択してください。');
+      }
+      
+      // タスクフォルダとノートフォルダを作成
+      try {
+        // タスクフォルダの作成
+        const taskFolderPath = updatedSettings.taskFolderPath;
+        await createDirectoryByPath(dirHandle, taskFolderPath);
+        console.log(`タスクフォルダ '${taskFolderPath}' を作成しました`);
+        
+        // ノートフォルダの作成
+        const noteFolderPath = updatedSettings.noteFolderPath;
+        await createDirectoryByPath(dirHandle, noteFolderPath);
+        console.log(`ノートフォルダ '${noteFolderPath}' を作成しました`);
+      } catch (folderError) {
+        console.error('フォルダの作成に失敗しました:', folderError);
+        throw new Error('フォルダの作成に失敗しました。別のディレクトリを選択してください。');
+      }
+      
+      toast.success(`保管庫「${dirHandle.name}」を選択しました`);
+      
+      // 初回同期を実行する前に状態を更新
+      setIsFirstSync(true);
+      
+      // 同期を実行
+      try {
+        await syncWithVault();
+        console.log('初回同期が完了しました');
+      } catch (syncError) {
+        console.error('初回同期中にエラーが発生しました:', syncError);
+        toast.error('同期中にエラーが発生しました。再度お試しください。');
+      }
+    } catch (error) {
+      console.error('保管庫の選択中にエラーが発生しました:', error);
+      toast.error('保管庫の選択中にエラーが発生しました: ' + (error instanceof Error ? error.message : '不明なエラー'));
+    }
+  };
+
+  // タスクを追加
+  const addTask = (taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>): Task => {
+    const newTask = createTask(taskData);
+    setTasks([...tasks, newTask]);
+    setHasLocalChanges(true);
+    
+    // 変更後に自動同期
+    setTimeout(() => {
+      syncWithVault().catch(error => {
+        console.error('タスク追加後の同期中にエラーが発生しました:', error);
+        toast.error('同期中にエラーが発生しました。設定画面で保管庫を確認してください。');
+      });
+    }, 100); // 少し遅延させて実行し、UIの更新が完了してから同期する
+    
+    return newTask;
+  };
+
+  // タスクを更新
+  const updateTask = (taskId: string, updates: Partial<Task>): void => {
+    const updatedTasks = updateTaskService(tasks, taskId, updates);
+    setTasks(updatedTasks);
+    setHasLocalChanges(true);
+    
+    // 変更後に自動同期
+    setTimeout(() => {
+      syncWithVault().catch(error => {
+        console.error('タスク更新後の同期中にエラーが発生しました:', error);
+        toast.error('同期中にエラーが発生しました。設定画面で保管庫を確認してください。');
+      });
+    }, 100); // 少し遅延させて実行し、UIの更新が完了してから同期する
+  };
+
+  // タスクを削除
+  const deleteTask = (taskId: string): void => {
+    const updatedTasks = deleteTaskService(tasks, taskId);
+    setTasks(updatedTasks);
+    setHasLocalChanges(true);
+    
+    // 変更後に自動同期
+    setTimeout(() => {
+      syncWithVault().catch(error => {
+        console.error('タスク削除後の同期中にエラーが発生しました:', error);
+        toast.error('同期中にエラーが発生しました。設定画面で保管庫を確認してください。');
+      });
+    }, 100); // 少し遅延させて実行し、UIの更新が完了してから同期する
+  };
+
+  // 保管庫と同期
+  const syncWithVault = async (): Promise<void> => {
+    try {
+      // 読み込み中または権限確認中の場合は処理を延期
+      if (isLoading) {
+        toast.info('設定の読み込み中です。しばらくお待ちください...', {
+          autoClose: 3000,
+          position: 'top-center',
+        });
+        return;
+      }
+      
+      if (isPermissionChecking) {
+        toast.info('保管庫へのアクセス権限を確認中です。しばらくお待ちください...', {
+          autoClose: 3000,
+          position: 'top-center',
+        });
+        return;
+      }
+      
+      // 保管庫が選択されていない場合は自動的に権限確認を試みる
+      if (!isVaultSelected) {
+        const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+        if (savedSettings) {
+          try {
+            const parsedSettings = JSON.parse(savedSettings);
+            if (parsedSettings.vaultPath && parsedSettings.vaultPath !== '未選択') {
+              // 設定はあるが権限がない可能性があるため、権限確認を試みる
+              setIsPermissionChecking(true);
+              toast.info('保管庫へのアクセス権限を確認しています...', {
+                autoClose: 3000,
+                position: 'top-center',
+              });
+              
+              try {
+                await checkDirectoryPermission();
+                // 権限確認後に再度同期を試みる
+                setTimeout(() => syncWithVault(), 1000);
+                return;
+              } catch (error) {
+                console.error('権限確認中にエラーが発生しました:', error);
+                // エラーが発生した場合は通常のフローに進む
+              }
+            }
+          } catch (parseError) {
+            console.error('設定の解析中にエラーが発生しました:', parseError);
+          }
+        }
+        
+        toast.info('保管庫が選択されていません。設定画面で保管庫を選択してください。', {
+          autoClose: 5000,
+          position: 'top-center',
+        });
+        return;
+      }
+      
+      // 同期開始状態を設定
+      setIsSyncing(true);
+      setSyncError(null);
+      
+      // ディレクトリハンドルをキャッシュから取得
+      const vaultDirHandle = await getDirectoryHandleFromCache('vault');
+      
+      // 保管庫が選択されていない場合は自動的に権限確認を試みる
+      if (!isVaultSelected) {
+        const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+        if (savedSettings) {
+          try {
+            const parsedSettings = JSON.parse(savedSettings);
+            if (parsedSettings.vaultPath && parsedSettings.vaultPath !== '未選択') {
+              // 設定はあるが権限がない可能性があるため、権限確認を試みる
+              setIsPermissionChecking(true);
+              toast.info('保管庫へのアクセス権限を確認しています...', {
+                autoClose: 3000,
+                position: 'top-center',
+              });
+              
+              try {
+                await checkDirectoryPermission();
+                // 権限確認後に再度同期を試みる
+                setTimeout(() => syncWithVault(), 1000);
+                return;
+              } catch (error) {
+                console.error('権限確認中にエラーが発生しました:', error);
+                // エラーが発生した場合は通常のフローに進む
+              }
+            }
+          } catch (parseError) {
+            console.error('設定の解析中にエラーが発生しました:', parseError);
+          }
+        }
+        
+        toast.info('保管庫が選択されていません。設定画面で保管庫を選択してください。', {
+          autoClose: 5000,
+          position: 'top-center',
+        });
+        return;
+      }
+      
+      // 同期開始状態を設定
+      setIsSyncing(true);
+      setSyncError(null);
+      
+      // ディレクトリハンドルをキャッシュから取得
+      const vaultDirHandle = await getDirectoryHandleFromCache('vault');
+      
+      // ディレクトリハンドルがない場合は同期しない
+      if (!vaultDirHandle) {
+        // ディレクトリハンドルがない場合は、読み込み中であることを通知
+        toast.info('保管庫の設定を確認中です。しばらくお待ちください...', {
+          autoClose: 3000,
+          position: 'top-center',
+        });
+        
+        // 権限確認を試みる
+        setIsPermissionChecking(true);
+        await checkDirectoryPermission();
+        
+        setIsSyncing(false);
+        return;
+      }
+      
+      // ディレクトリハンドルの検証
+      if (typeof vaultDirHandle !== 'object' || vaultDirHandle === null) {
+        console.error('無効なディレクトリハンドルです（オブジェクトではありません）:', vaultDirHandle);
+        toast.error('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。', {
+          autoClose: 5000,
+          position: 'top-center',
+        });
+        setIsSyncing(false);
+        return;
+      }
+      
+      // getFileHandleメソッドが存在するか確認
+      if (typeof vaultDirHandle.getFileHandle !== 'function') {
+        console.error('無効なディレクトリハンドルです（getFileHandleメソッドが存在しません）:', vaultDirHandle);
+        toast.error('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。', {
+          autoClose: 5000,
+          position: 'top-center',
+        });
+        setIsSyncing(false);
+        return;
+      }
+      
+      console.log('保管庫との同期を開始します...');
+      
+      // 権限を確認
+      try {
+        // @ts-ignore - TypeScriptの型定義が最新のAPIに追いついていない場合の対処
+        const permission = await vaultDirHandle.requestPermission({ mode: 'readwrite' });
+        console.log(`ディレクトリハンドルの権限状態: ${permission}`);
+        
+        if (permission !== 'granted') {
+          throw new Error('保管庫へのアクセス権限が付与されませんでした。');
+        }
+      } catch (permissionError) {
+        console.error('権限確認中にエラーが発生しました:', permissionError);
+        
+        // 権限確認エラーの場合、権限確認プロセスを開始
+        setIsPermissionChecking(true);
+        toast.info('保管庫へのアクセス権限を確認しています...', {
+          autoClose: 3000,
+          position: 'top-center',
+        });
+        
+        await checkDirectoryPermission();
+        setIsSyncing(false);
+        return;
+      }
+    } catch (error) {
+      // 予期しないエラーが発生した場合の処理
+      console.error('同期準備中に予期しないエラーが発生しました:', error);
+      toast.error('同期準備中にエラーが発生しました。もう一度お試しください。', {
+        autoClose: 5000,
+        position: 'top-center',
+      });
+      return;
+    }
+    
+    // 同期開始状態を設定
+    setIsSyncing(true);
+    setSyncError(null);
+    
+    // ディレクトリハンドルをキャッシュから取得
+    const vaultDirHandle = await getDirectoryHandleFromCache('vault');
+    
+    // ディレクトリハンドルがない場合は同期しない
+    if (!vaultDirHandle) {
+      // ディレクトリハンドルがない場合は、読み込み中であることを通知
+      toast.info('保管庫の設定を確認中です。しばらくお待ちください...', {
+        autoClose: 3000,
+        position: 'top-center',
+      });
+      
+      // 権限確認を試みる
+      setIsPermissionChecking(true);
+      await checkDirectoryPermission();
+      
+      setIsSyncing(false);
+      return;
+    }
+    
+    // ディレクトリハンドルの検証
+    if (typeof vaultDirHandle !== 'object' || vaultDirHandle === null) {
+      console.error('無効なディレクトリハンドルです（オブジェクトではありません）:', vaultDirHandle);
+      toast.error('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。', {
+        autoClose: 5000,
+        position: 'top-center',
+      });
+      setIsSyncing(false);
+      return;
+    }
+    
+    // getFileHandleメソッドが存在するか確認
+    if (typeof vaultDirHandle.getFileHandle !== 'function') {
+      console.error('無効なディレクトリハンドルです（getFileHandleメソッドが存在しません）:', vaultDirHandle);
+      toast.error('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。', {
+        autoClose: 5000,
+        position: 'top-center',
+      });
+      setIsSyncing(false);
+      return;
+    }
+    
+    console.log('保管庫との同期を開始します...');
+    
+    // 権限を確認
+    try {
+      // @ts-ignore - TypeScriptの型定義が最新のAPIに追いついていない場合の対処
+      const permission = await vaultDirHandle.requestPermission({ mode: 'readwrite' });
+      console.log(`ディレクトリハンドルの権限状態: ${permission}`);
+      
+      if (permission !== 'granted') {
+        throw new Error('保管庫へのアクセス権限が付与されませんでした。');
+      }
+    } catch (permissionError) {
+      console.error('権限確認中にエラーが発生しました:', permissionError);
+      
+      // 権限確認エラーの場合、権限確認プロセスを開始
+      setIsPermissionChecking(true);
+      toast.info('保管庫へのアクセス権限を確認しています...', {
+        autoClose: 3000,
+        position: 'top-center',
+      });
+      
+      await checkDirectoryPermission();
+      setIsSyncing(false);
+      return;
+    }
+  } catch (error) {
+    // 予期しないエラーが発生した場合の処理
+    console.error('同期準備中に予期しないエラーが発生しました:', error);
+    toast.error('同期準備中にエラーが発生しました。もう一度お試しください。', {
+      autoClose: 5000,
+      position: 'top-center',
+    });
+    setIsSyncing(false);
+    return;
+  }
+  
+  // 設定からタスクフォルダのパスを取得
+  let taskFolderPath = 'Obsidian-Sync-Tasks';
+  const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+  if (savedSettings) {
+    try {
+      const parsedSettings = JSON.parse(savedSettings);
+      if (parsedSettings.taskFolderPath) {
+        taskFolderPath = parsedSettings.taskFolderPath;
+        console.log('設定からタスクフォルダパスを取得しました:', taskFolderPath);
+      }
+    } catch (error) {
+      console.error('設定からタスクフォルダパスの取得に失敗しました:', error);
+    }
+  }
+  
+  try {
+  
+    // タスクフォルダが存在するか確認し、存在しない場合は作成
+    try {
+      await createDirectoryByPath(vaultDirHandle, taskFolderPath);
+      console.log(`タスクフォルダ '${taskFolderPath}' の存在を確認しました`);
+    } catch (folderError) {
+      console.error('タスクフォルダの確認中にエラーが発生しました:', folderError);
+      throw new Error(`タスクフォルダ '${taskFolderPath}' の作成に失敗しました。`);
+    }
+    
+    // 同期処理を実行
+    const result = await syncTasksWithVault(
+      vaultDirHandle,
+      taskFolderPath,
+      tasks,
+      isFirstSync
+    );
+    
+    // タスクを更新
+    if (result.hasChanges) {
+      setTasks(result.mergedTasks);
+      toast.success('タスクを同期しました');
+    } else {
+      toast.success('同期が完了しました（変更なし）');
+      }
+      
+      // 初回同期フラグをオフにする
+      if (isFirstSync) {
+        setIsFirstSync(false);
+      }
+      
+      // 同期時間を更新
+      const syncTime = new Date().toISOString();
+      setLastSynced(syncTime);
+      localStorage.setItem('obsidian-task-sync-last-synced', syncTime);
+      
+      // ローカル変更フラグをリセット
+      setHasLocalChanges(false);
+    } catch (error) {
+      console.error('同期中にエラーが発生しました:', error);
+      setSyncError(error instanceof Error ? error.message : '不明なエラー');
+      toast.error('同期中にエラーが発生しました: ' + (error instanceof Error ? error.message : '不明なエラー'));
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  return (
+    <TaskManagerContext.Provider
+      value={{
+        tasks,
+        addTask,
+        updateTask,
+        deleteTask,
+        syncWithVault,
+        selectVault,
+        isFirstSync,
+        isVaultSelected,
+        isSyncing,
+        hasLocalChanges,
+        lastSynced,
+        syncError,
+        isLoading,
+        isPermissionChecking,
+      }}
+    >
+      {children}
+    </TaskManagerContext.Provider>
+  );
+};

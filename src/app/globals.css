@@ -3,6 +3,9 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --primary-color: #7C3AED;
+  --primary-dark: #6D28D9;
+  --button-text: #ffffff;
 }
 
 @theme inline {
@@ -23,4 +26,29 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ボタンのスタイル修正 */
+button {
+  cursor: pointer !important;
+}
+
+/* プライマリーボタンのスタイル */
+.bg-primary {
+  background-color: var(--primary-color) !important;
+  color: var(--button-text) !important;
+}
+
+.hover\:bg-primary-dark:hover {
+  background-color: var(--primary-dark) !important;
+}
+
+/* ページ遷移時のスタイル保持 */
+.text-white {
+  color: var(--button-text) !important;
+}
+
+/* ボタンの境界線スタイル */
+button.border {
+  border: 1px solid #d1d5db !important;
 }

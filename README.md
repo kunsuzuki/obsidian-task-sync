@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Obsidian Task Sync
 
-## Getting Started
+Obsidianと同期するタスク管理Webアプリケーションです。File System Access APIを使用して、Obsidianの保管庫内のマークダウンファイルとタスクを同期します。
 
-First, run the development server:
+## 機能
+
+- **タスク管理**: タスクの作成、編集、削除、ステータス管理（未着手、進行中、完了）
+- **Obsidian同期**: File System Access APIを使用して保管庫のマークダウンファイルと同期
+- **差分同期**: 手動同期ボタン、起動時同期、フォーカス時同期、定期的な自動同期
+- **デイリーノート同期**: タスクをデイリーノートの特定セクションに同期
+- **ノート作成**: タスクに関連するノートの作成とリンク
+- **カスタマイズ可能な設定**: 保管庫パス、フォルダ構造、同期間隔などの設定
+
+## 使い方
+
+### インストールと起動
 
 ```bash
+# 依存関係のインストール
+npm install
+
+# 開発サーバーの起動
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 初期設定
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. アプリを起動し、「設定」タブに移動します
+2. 「Obsidian保管庫」の「選択」ボタンをクリックして、Obsidianの保管庫フォルダを選択します
+3. タスクの保存先フォルダ、ノートの保存先フォルダ、デイリーノートの設定などを必要に応じて変更します
+4. 「今すぐ同期」ボタンをクリックして初回同期を実行します
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### タスク管理
 
-## Learn More
+1. 「タスク管理」タブで「新しいタスク」ボタンをクリックしてタスクを作成します
+2. タスク名、ステータス、納期、タグ、ノートリンクを入力します
+3. タスクはObsidianの保管庫内に保存され、設定に応じて自動的に同期されます
 
-To learn more about Next.js, take a look at the following resources:
+## 技術スタック
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **フロントエンド**: Next.js、React、TypeScript、Tailwind CSS
+- **ファイルアクセス**: File System Access API
+- **状態管理**: React Context API
+- **マークダウン処理**: marked
+- **UI/UX**: Tailwind CSS（Notion風テーマ）
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## ブラウザ対応
 
-## Deploy on Vercel
+File System Access APIを使用しているため、以下のブラウザでのみ動作します：
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Google Chrome (バージョン86以降)
+- Microsoft Edge (バージョン86以降)
+- Opera (バージョン72以降)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Firefox、Safari、iOS/Androidのモバイルブラウザでは現在サポートされていません。
+
+## 注意事項
+
+- このアプリはローカルファイルにアクセスするため、HTTPSまたはlocalhost環境で実行する必要があります
+- 初回アクセス時にファイルシステムへのアクセス許可を求められます
+- 大量のファイルを含む保管庫では同期に時間がかかる場合があります
+
+## 準備が必要なこと
+
+1. Obsidianがインストールされていること
+2. 対応ブラウザ（Chrome、Edge、Operaの最新版）を使用すること
+3. ローカル環境でアプリを実行すること（`npm run dev`）
+
+## ライセンス
+
+MIT
