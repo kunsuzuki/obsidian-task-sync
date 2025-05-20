@@ -49,7 +49,8 @@ export const NoteManagerProvider = ({ children }: { children: ReactNode }): Reac
     setIsCreatingNote(true);
 
     try {
-      const vaultDirHandle = getDirectoryHandleFromCache('vault');
+      // ディレクトリハンドルを非同期で取得
+      const vaultDirHandle = await getDirectoryHandleFromCache('vault');
       if (!vaultDirHandle) {
         toast.error('保管庫のディレクトリハンドルが見つかりません');
         setIsCreatingNote(false);
@@ -89,7 +90,8 @@ export const NoteManagerProvider = ({ children }: { children: ReactNode }): Reac
     setIsCreatingNote(true);
 
     try {
-      const vaultDirHandle = getDirectoryHandleFromCache('vault');
+      // ディレクトリハンドルを非同期で取得
+      const vaultDirHandle = await getDirectoryHandleFromCache('vault');
       if (!vaultDirHandle) {
         toast.error('保管庫のディレクトリハンドルが取得できませんでした。');
         return [];

@@ -79,7 +79,7 @@ export const TagManagerProvider = ({ children }: { children: ReactNode }) => {
     }
     
     const newTag: Tag = {
-      id: generateId(),
+      id: generateId('tag'),
       name: name.trim(),
       color: '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0'),
       createdAt: new Date().toISOString(),
@@ -146,7 +146,7 @@ export const TagManagerProvider = ({ children }: { children: ReactNode }) => {
     
     if (!exists) {
       const newTaskTag: TaskTag = {
-        id: generateId(),
+        id: generateId('tasktag'),
         taskId,
         tagId,
         createdAt: new Date().toISOString()

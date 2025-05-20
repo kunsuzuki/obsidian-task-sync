@@ -81,6 +81,7 @@ export const tagsToCSV = (tags: Tag[]): string => {
   const rows = tags.map(tag => [
     tag.id,
     tag.name,
+    tag.color,
     tag.createdAt,
     tag.updatedAt
   ]);
@@ -89,6 +90,7 @@ export const tagsToCSV = (tags: Tag[]): string => {
   const header = [
     'id',
     'name',
+    'color',
     'createdAt',
     'updatedAt'
   ];
@@ -108,13 +110,16 @@ export const csvToTags = (csvText: string): Tag[] => {
   const dataRows = rows.length > 0 && rows[0][0] === 'id' ? rows.slice(1) : rows;
   
   return dataRows.map(row => {
-    const [id, name, createdAt, updatedAt] = row;
+    // CSVデータの形式に応じて値を取得
+    const [id, name, color, createdAt, updatedAt] = row;
     
     return {
       id,
       name,
+      // color情報がない場合はデフォルトの色を設定
+      color: color || '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0'),
       createdAt,
-      updatedAt
+      updatedAt: updatedAt || createdAt // updatedAtがない場合はcreatedAtを使用
     };
   });
 };

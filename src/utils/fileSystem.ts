@@ -67,9 +67,16 @@ export const cacheDirectoryHandle = async (key: string, handle: FileSystemDirect
   try {
     // 権限を確認し、必要に応じて再リクエスト
     try {
-      // @ts-ignore - TypeScriptの型定義が最新のAPIに追いついていない場合の対処
       const permission = await handle.requestPermission({ mode: 'readwrite' });
-      console.log(`ディレクトリハンドルの権限状態: ${permission}`);
+      
+      // 権限が付与されていない場合はキャッシュをクリア
+      if (permission !== 'granted') {
+        _clearCacheForKey(key);
+        return undefined;
+      }
+      
+      // ログ出力を無効化
+      // console.log(`ディレクトリハンドルの権限状態: ${permission}`);
     } catch (error) {
       console.error('権限確認中にエラーが発生しました:', error);
     }
@@ -127,15 +134,16 @@ export const createDirectoryByPath = async (
 export const getDirectoryHandleFromCache = async (key: string): Promise<FileSystemDirectoryHandle | undefined> => {
   try {
     // まずメモリ上のキャッシュを確認
-    let handle = directoryHandleCache[key];
+    const handle = directoryHandleCache[key];
     
     // ディレクトリハンドルが存在するか確認
     if (!handle) {
-      console.log(`メモリ上にディレクトリハンドルが存在しません: ${key}`);
+      // デバッグモードの場合のみログを出力
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`メモリ上にディレクトリハンドルが存在しません: ${key}`);
+      }
       return undefined;
     }
-    
-    console.log(`メモリ上のキャッシュからディレクトリハンドルを取得しました: ${key}`);
     
     // ディレクトリハンドルの型を確認
     if (typeof handle !== 'object' || handle === null) {
@@ -148,45 +156,64 @@ export const getDirectoryHandleFromCache = async (key: string): Promise<FileSyst
     if (typeof handle.getFileHandle !== 'function') {
       console.error('キャッシュから取得したディレクトリハンドルが無効です (getFileHandleメソッドが存在しません):', handle);
       _clearCacheForKey(key);
-      return undefined;
+      throw new Error('無効なディレクトリハンドルです。保管庫を再選択してください。');
     }
     
-    // ディレクトリハンドルの詳細をログに出力
-    try {
-      console.log(`キャッシュから取得したディレクトリハンドル情報:`, {
-        name: handle.name,
-        kind: handle.kind,
-        methods: Object.getOwnPropertyNames(Object.getPrototypeOf(handle))
-      });
-    } catch (error) {
-      console.error('ディレクトリハンドルの詳細取得中にエラーが発生しました:', error);
+    // ディレクトリハンドルの種類を確認
+    if (handle.kind !== 'directory') {
+      console.error('無効なディレクトリハンドルです（ディレクトリではありません）:', handle);
       _clearCacheForKey(key);
-      return undefined;
+      throw new Error('無効なディレクトリハンドルです。保管庫を再選択してください。');
     }
     
-    // 権限を確認し、必要に応じて再リクエスト
+    // 権限を確認
     try {
-      // @ts-ignore - TypeScriptの型定義が最新のAPIに追いついていない場合の対処
       const permission = await handle.requestPermission({ mode: 'readwrite' });
-      console.log(`ディレクトリハンドルの権限状態: ${permission}`);
       
-      // 権限が付与されていない場合は再選択を促す
+      // ログ出力を無効化
+      // console.log(`ディレクトリハンドルの権限状態: ${permission}`);
+      
       if (permission !== 'granted') {
-        console.warn('ディレクトリへの権限が付与されていません。再選択が必要です。');
-        _clearCacheForKey(key);
-        return undefined;
+        console.warn('保管庫へのアクセス権限が付与されていません:', key);
+        throw new Error('保管庫へのアクセス権限が付与されていません。設定画面から保管庫を再選択してください。');
       }
     } catch (error) {
       console.error('権限確認中にエラーが発生しました:', error);
-      // エラーが発生した場合はキャッシュをクリアして再選択を促す
-      _clearCacheForKey(key);
-      return undefined;
+      
+      // エラーの種類によって処理を分ける
+      if (error instanceof DOMException && error.name === 'NotAllowedError') {
+        // 権限が拒否された場合
+        throw new Error('保管庫へのアクセス権限が拒否されました。設定画面から保管庫を再選択してください。');
+      } else if (error instanceof DOMException && error.name === 'InvalidStateError') {
+        // ディレクトリハンドルが無効な状態の場合
+        _clearCacheForKey(key);
+        throw new Error('保管庫へのアクセスが無効になりました。設定画面から保管庫を再選択してください。');
+      } else {
+        // その他のエラー
+        _clearCacheForKey(key);
+        throw new Error(`保管庫へのアクセス中にエラーが発生しました: ${error instanceof Error ? error.message : '不明なエラー'}`);
+      }
     }
     
-    // すべてのチェックに通過した場合はディレクトリハンドルを返す
+    // ディレクトリハンドルの検証が完了した場合、キャッシュを更新
+    directoryHandleCache[key] = handle;
+    
+    // キャッシュのステータスを更新
+    const cacheStatus = {
+      timestamp: Date.now(),
+      keys: Object.keys(directoryHandleCache)
+    };
+    
+    // ローカルストレージとセッションストレージにステータスを保存
+    localStorage.setItem('directory-handle-cache-status', JSON.stringify(cacheStatus));
+    sessionStorage.setItem('directory-handle-cache-status', JSON.stringify(cacheStatus));
+    
     return handle;
   } catch (error) {
-    console.error('ディレクトリハンドルの取得中に予期しないエラーが発生しました:', error);
+    // エラーハンドリング
+    console.error(`ディレクトリハンドルの取得中にエラーが発生しました: ${key}`, error);
+    
+    // キャッシュをクリア
     _clearCacheForKey(key);
     return undefined;
   }

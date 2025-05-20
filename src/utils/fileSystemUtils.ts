@@ -32,6 +32,9 @@ export const readTasksFile = async (
 ): Promise<Task[]> => {
   try {
     // タスクフォルダのハンドルを取得
+    if (typeof taskFolderPath !== 'string') {
+      throw new Error('タスクフォルダパスは文字列である必要があります');
+    }
     const taskDirHandle = await getOrCreateDirectoryByPath(vaultDirHandle, taskFolderPath);
     if (!taskDirHandle) {
       throw new Error(`タスクフォルダ ${taskFolderPath} が見つかりません`);
@@ -70,6 +73,9 @@ export const writeTasksFile = async (
 ): Promise<void> => {
   try {
     // タスクフォルダのハンドルを取得
+    if (typeof taskFolderPath !== 'string') {
+      throw new Error('タスクフォルダパスは文字列である必要があります');
+    }
     const taskDirHandle = await getOrCreateDirectoryByPath(vaultDirHandle, taskFolderPath);
     if (!taskDirHandle) {
       throw new Error(`タスクフォルダ ${taskFolderPath} が見つかりません`);
@@ -173,6 +179,9 @@ export const readTagsFile = async (
 ): Promise<Tag[]> => {
   try {
     // タスクフォルダのハンドルを取得
+    if (typeof taskFolderPath !== 'string') {
+      throw new Error('タスクフォルダパスは文字列である必要があります');
+    }
     const taskDirHandle = await getOrCreateDirectoryByPath(vaultDirHandle, taskFolderPath);
     if (!taskDirHandle) {
       throw new Error(`タスクフォルダ ${taskFolderPath} が見つかりません`);
@@ -211,6 +220,9 @@ export const writeTagsFile = async (
 ): Promise<void> => {
   try {
     // タスクフォルダのハンドルを取得
+    if (typeof taskFolderPath !== 'string') {
+      throw new Error('タスクフォルダパスは文字列である必要があります');
+    }
     const taskDirHandle = await getOrCreateDirectoryByPath(vaultDirHandle, taskFolderPath);
     if (!taskDirHandle) {
       throw new Error(`タスクフォルダ ${taskFolderPath} が見つかりません`);
@@ -242,6 +254,9 @@ export const readTaskTagsFile = async (
 ): Promise<TaskTag[]> => {
   try {
     // タスクフォルダのハンドルを取得
+    if (typeof taskFolderPath !== 'string') {
+      throw new Error('タスクフォルダパスは文字列である必要があります');
+    }
     const taskDirHandle = await getOrCreateDirectoryByPath(vaultDirHandle, taskFolderPath);
     if (!taskDirHandle) {
       throw new Error(`タスクフォルダ ${taskFolderPath} が見つかりません`);
@@ -280,6 +295,9 @@ export const writeTaskTagsFile = async (
 ): Promise<void> => {
   try {
     // タスクフォルダのハンドルを取得
+    if (typeof taskFolderPath !== 'string') {
+      throw new Error('タスクフォルダパスは文字列である必要があります');
+    }
     const taskDirHandle = await getOrCreateDirectoryByPath(vaultDirHandle, taskFolderPath);
     if (!taskDirHandle) {
       throw new Error(`タスクフォルダ ${taskFolderPath} が見つかりません`);
@@ -315,6 +333,9 @@ export const getDailyNoteFileHandle = async (
 ): Promise<FileSystemFileHandle> => {
   try {
     // デイリーノートフォルダのハンドルを取得
+    if (typeof dailyNoteFolderPath !== 'string') {
+      throw new Error('デイリーノートフォルダパスは文字列である必要があります');
+    }
     const dailyNoteDirHandle = await getOrCreateDirectoryByPath(vaultDirHandle, dailyNoteFolderPath);
     if (!dailyNoteDirHandle) {
       throw new Error(`デイリーノートフォルダ ${dailyNoteFolderPath} が見つかりません`);

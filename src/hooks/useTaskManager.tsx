@@ -84,7 +84,9 @@ export const TaskManagerProvider: React.FC<{ children: React.ReactNode }> = ({ c
       try {
         // @ts-ignore - TypeScriptの型定義が最新のAPIに追いついていない場合の対処
         const permission = await vaultDirHandle.requestPermission({ mode: 'readwrite' });
-        console.log(`ディレクトリハンドルの権限状態: ${permission}`);
+        
+        // ログ出力を無効化
+        // console.log(`ディレクトリハンドルの権限確認結果: ${permission}`);
         
         if (permission === 'granted') {
           // 権限が付与された場合
@@ -309,48 +311,197 @@ export const TaskManagerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   // タスクを追加
   const addTask = (taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>): Task => {
     const newTask = createTask(taskData);
-    setTasks(prevTasks => [...prevTasks, newTask]);
+    
+    // タスクリストを更新
+    const updatedTasks = [...tasks, newTask];
+    setTasks(updatedTasks);
     setHasLocalChanges(true);
     
-    // 変更後に自動同期
-    setTimeout(() => {
-      syncWithVault().catch(error => {
-        console.error('タスク追加後の同期中にエラーが発生しました:', error);
-        toast.error('同期中にエラーが発生しました。設定画面で保管庫を確認してください。');
-      });
-    }, 100); // 少し遅延させて実行し、UIの更新が完了してから同期する
+    // ローカルストレージに保存
+    localStorage.setItem('obsidian-task-sync-tasks', JSON.stringify(updatedTasks));
+    
+    // タスク追加後に同期処理を実行
+    if (isVaultSelected) {
+      // 同期処理を即座に実行（非同期で実行し、エラーをキャッチ）
+      (async () => {
+        try {
+          // ディレクトリハンドルをキャッシュから取得
+          const vaultDirHandle = await getDirectoryHandleFromCache('vault');
+          if (!vaultDirHandle) {
+            toast.error('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。');
+            return;
+          }
+          
+          // 設定からタスクフォルダのパスを取得
+          let taskFolderPath = 'Obsidian-Sync-Tasks';
+          const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+          if (savedSettings) {
+            const parsedSettings = JSON.parse(savedSettings);
+            if (parsedSettings.taskFolderPath) {
+              taskFolderPath = parsedSettings.taskFolderPath;
+            }
+          }
+          
+          // タスクフォルダが存在するか確認し、存在しない場合は作成
+          await createDirectoryByPath(vaultDirHandle, taskFolderPath);
+          
+          // 更新後のタスクリストを直接同期処理に渡す
+          const result = await syncTasksWithVault(
+            vaultDirHandle,
+            taskFolderPath,
+            updatedTasks,  // 更新後のタスクリストを使用
+            isFirstSync
+          );
+          
+          // 同期時間を更新
+          const syncTime = new Date().toISOString();
+          setLastSynced(syncTime);
+          localStorage.setItem('obsidian-task-sync-last-synced', syncTime);
+          
+          // ローカル変更フラグをリセット
+          setHasLocalChanges(false);
+          
+          // 同期成功メッセージを表示
+          toast.success('タスクを追加し、保管庫と同期しました');
+        } catch (error) {
+          console.error('タスク追加後の同期中にエラーが発生しました:', error);
+          toast.error('同期中にエラーが発生しました。詳細はコンソールを確認してください。');
+        }
+      })();
+    } else {
+      // 保管庫が選択されていない場合は警告を表示
+      toast.warning('保管庫が選択されていません。設定画面で保管庫を選択してください。');
+    }
     
     return newTask;
   };
   
   // タスクを更新
   const updateTask = (taskId: string, updates: Partial<Task>): void => {
+    // タスクを更新
     const updatedTasks = updateTaskService(tasks, taskId, updates);
     setTasks(updatedTasks);
     setHasLocalChanges(true);
     
-    // 変更後に自動同期
-    setTimeout(() => {
-      syncWithVault().catch(error => {
-        console.error('タスク更新後の同期中にエラーが発生しました:', error);
-        toast.error('同期中にエラーが発生しました。設定画面で保管庫を確認してください。');
-      });
-    }, 100); // 少し遅延させて実行し、UIの更新が完了してから同期する
+    // ローカルストレージに保存
+    localStorage.setItem('obsidian-task-sync-tasks', JSON.stringify(updatedTasks));
+    
+    // タスク更新後に同期処理を実行
+    if (isVaultSelected) {
+      // 同期処理を即座に実行（非同期で実行し、エラーをキャッチ）
+      (async () => {
+        try {
+          // ディレクトリハンドルをキャッシュから取得
+          const vaultDirHandle = await getDirectoryHandleFromCache('vault');
+          if (!vaultDirHandle) {
+            toast.error('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。');
+            return;
+          }
+          
+          // 設定からタスクフォルダのパスを取得
+          let taskFolderPath = 'Obsidian-Sync-Tasks';
+          const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+          if (savedSettings) {
+            const parsedSettings = JSON.parse(savedSettings);
+            if (parsedSettings.taskFolderPath) {
+              taskFolderPath = parsedSettings.taskFolderPath;
+            }
+          }
+          
+          // タスクフォルダが存在するか確認し、存在しない場合は作成
+          await createDirectoryByPath(vaultDirHandle, taskFolderPath);
+          
+          // 更新後のタスクリストを直接同期処理に渡す
+          const result = await syncTasksWithVault(
+            vaultDirHandle,
+            taskFolderPath,
+            updatedTasks,  // 更新後のタスクリストを使用
+            isFirstSync
+          );
+          
+          // 同期時間を更新
+          const syncTime = new Date().toISOString();
+          setLastSynced(syncTime);
+          localStorage.setItem('obsidian-task-sync-last-synced', syncTime);
+          
+          // ローカル変更フラグをリセット
+          setHasLocalChanges(false);
+          
+          // 同期成功メッセージを表示
+          toast.success('タスクを更新し、保管庫と同期しました');
+        } catch (error) {
+          console.error('タスク更新後の同期中にエラーが発生しました:', error);
+          toast.error('同期中にエラーが発生しました。詳細はコンソールを確認してください。');
+        }
+      })();
+    } else {
+      // 保管庫が選択されていない場合は警告を表示
+      toast.warning('保管庫が選択されていません。設定画面で保管庫を選択してください。');
+    }
   };
   
   // タスクを削除
   const deleteTask = (taskId: string): void => {
+    // タスクを削除
     const updatedTasks = deleteTaskService(tasks, taskId);
     setTasks(updatedTasks);
     setHasLocalChanges(true);
     
-    // 変更後に自動同期
-    setTimeout(() => {
-      syncWithVault().catch(error => {
-        console.error('タスク削除後の同期中にエラーが発生しました:', error);
-        toast.error('同期中にエラーが発生しました。設定画面で保管庫を確認してください。');
-      });
-    }, 100); // 少し遅延させて実行し、UIの更新が完了してから同期する
+    // ローカルストレージに保存
+    localStorage.setItem('obsidian-task-sync-tasks', JSON.stringify(updatedTasks));
+    
+    // タスク削除後に同期処理を実行
+    if (isVaultSelected) {
+      // 同期処理を即座に実行（非同期で実行し、エラーをキャッチ）
+      (async () => {
+        try {
+          // ディレクトリハンドルをキャッシュから取得
+          const vaultDirHandle = await getDirectoryHandleFromCache('vault');
+          if (!vaultDirHandle) {
+            toast.error('保管庫へのアクセス権限が失われています。設定画面から保管庫を再選択してください。');
+            return;
+          }
+          
+          // 設定からタスクフォルダのパスを取得
+          let taskFolderPath = 'Obsidian-Sync-Tasks';
+          const savedSettings = localStorage.getItem('obsidian-task-sync-settings');
+          if (savedSettings) {
+            const parsedSettings = JSON.parse(savedSettings);
+            if (parsedSettings.taskFolderPath) {
+              taskFolderPath = parsedSettings.taskFolderPath;
+            }
+          }
+          
+          // タスクフォルダが存在するか確認し、存在しない場合は作成
+          await createDirectoryByPath(vaultDirHandle, taskFolderPath);
+          
+          // 更新後のタスクリストを直接同期処理に渡す
+          const result = await syncTasksWithVault(
+            vaultDirHandle,
+            taskFolderPath,
+            updatedTasks,  // 更新後のタスクリストを使用
+            isFirstSync
+          );
+          
+          // 同期時間を更新
+          const syncTime = new Date().toISOString();
+          setLastSynced(syncTime);
+          localStorage.setItem('obsidian-task-sync-last-synced', syncTime);
+          
+          // ローカル変更フラグをリセット
+          setHasLocalChanges(false);
+          
+          // 同期成功メッセージを表示
+          toast.success('タスクを削除し、保管庫と同期しました');
+        } catch (error) {
+          console.error('タスク削除後の同期中にエラーが発生しました:', error);
+          toast.error('同期中にエラーが発生しました。詳細はコンソールを確認してください。');
+        }
+      })();
+    } else {
+      // 保管庫が選択されていない場合は警告を表示
+      toast.warning('保管庫が選択されていません。設定画面で保管庫を選択してください。');
+    }
   };
 
   // 保管庫と同期

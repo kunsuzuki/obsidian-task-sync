@@ -315,7 +315,7 @@ const TaskForm = ({ taskToEdit, onCancel }: TaskFormProps) => {
               ) : (
                 tagInput.trim() ? (
                   <div className="px-3 py-2 text-text-muted">
-                    "{tagInput}"を新しいタグとして追加するにはエンターを押してください
+                    &ldquo;{tagInput}&rdquo;を新しいタグとして追加するにはエンターを押してください
                   </div>
                 ) : (
                   allTags.length > 0 ? (
